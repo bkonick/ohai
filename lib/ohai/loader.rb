@@ -30,11 +30,7 @@ module Ohai
   class Loader
 
     # Simple struct like objects to track the path of a plugin and the root
-    # directory of plugins in which we found it. We don't care about the
-    # relative paths of v7 plugins, but in v6 plugins, dependencies are
-    # specified by calling `require_plugin` with a relative path. To manage
-    # this, we track the path and root of each file as we discover them so we
-    # can feed this into the v6 "dependency solver" as we load them.
+    # directory of plugins in which we found it.
     PluginFile = Struct.new(:path, :plugin_root) do
 
       # Finds all the *.rb files under the configured paths in :plugin_path
@@ -53,13 +49,8 @@ module Ohai
       end
     end
 
-    # Simple struct to track a v6 plugin's class, file path, and the root of
-    # the plugin dir from which it was loaded.
-    V6PluginClass = Struct.new(:plugin_class, :plugin_path, :plugin_dir_path)
-
     def initialize(controller)
       @controller = controller
-      @v6_plugin_classes = []
       @v7_plugin_classes = []
     end
 
@@ -73,10 +64,9 @@ module Ohai
 
     def load_all
       plugin_files_by_dir.each do |plugin_file|
-        load_plugin_class(plugin_file.path, plugin_file.plugin_root)
+        load_plugin_file(plugin_file.path)
       end
 
-      collect_v6_plugins
       collect_v7_plugins
     end
 
@@ -84,7 +74,7 @@ module Ohai
       from = [ Ohai.config[:plugin_path], from].flatten
       plugin_files_by_dir(from).collect do |plugin_file|
         Ohai::Log.debug "Loading additional plugin: #{plugin_file}"
-        plugin = load_plugin_class(plugin_file.path, plugin_file.plugin_root)
+        plugin = load_plugin_file(plugin_file.path)
         load_v7_plugin(plugin)
       end
     end
@@ -92,13 +82,10 @@ module Ohai
     # Load a specified file as an ohai plugin and creates an instance of it.
     # Not used by ohai itself, but can be used to load a plugin for testing
     # purposes.
-    # plugin_dir_path is required when loading a v6 plugin.
-    def load_plugin(plugin_path, plugin_dir_path = nil)
-      plugin_class = load_plugin_class(plugin_path, plugin_dir_path)
+    def load_plugin(plugin_path)
+      plugin_class = load_plugin_file(plugin_path)
       return nil unless plugin_class.kind_of?(Class)
       case
-      when plugin_class < Ohai::DSL::Plugin::VersionVI
-        load_v6_plugin(plugin_class, plugin_path, plugin_dir_path)
       when plugin_class < Ohai::DSL::Plugin::VersionVII
         load_v7_plugin(plugin_class)
       else
@@ -108,31 +95,19 @@ module Ohai
 
     # Reads the file specified by `plugin_path` and returns a class object for
     # the ohai plugin defined therein.
-    #
-    # If `plugin_dir_path` is given, and the file at `plugin_path` is a v6
-    # plugin, the 'relative path' of the plugin (used by `require_plugin()`) is
-    # computed by finding the relative path from `plugin_dir_path` to `plugin_path`
-    def load_plugin_class(plugin_path, plugin_dir_path = nil)
-      # Read the contents of the plugin to understand if it's a V6 or V7 plugin.
+    def load_plugin_file(plugin_path)
+      # Read the contents of the plugin
       contents = ""
       begin
-        Ohai::Log.debug("Loading plugin at #{plugin_path}")
+        Ohai::Log.debug("Reading plugin at #{plugin_path}")
         contents << IO.read(plugin_path)
       rescue IOError, Errno::ENOENT
         Ohai::Log.warn("Unable to open or read plugin at #{plugin_path}")
         return nil
       end
 
-      # We assume that a plugin is a V7 plugin if it contains Ohai.plugin in its contents.
       if contents.include?("Ohai.plugin")
         load_v7_plugin_class(contents, plugin_path)
-      else
-        Ohai::Log.warn("[DEPRECATION] Plugin at #{plugin_path} is a version 6 plugin. \
-Version 6 plugins will not be supported in Chef/Ohai 14. \
-Please upgrade your plugin to version 7 plugin format. \
-For more information visit here: docs.chef.io/ohai_custom.html")
-
-        load_v6_plugin_class(contents, plugin_path, plugin_dir_path)
       end
     end
 
@@ -143,47 +118,14 @@ For more information visit here: docs.chef.io/ohai_custom.html")
       @controller.provides_map.set_providers_for(plugin, plugin_provides)
     end
 
-    def v6_dependency_solver
-      @controller.v6_dependency_solver
-    end
-
-    def collect_v6_plugins
-      @v6_plugin_classes.each do |plugin_spec|
-        plugin = load_v6_plugin(plugin_spec.plugin_class, plugin_spec.plugin_path, plugin_spec.plugin_dir_path)
-        loaded_v6_plugin(plugin, plugin_spec.plugin_path, plugin_spec.plugin_dir_path)
-      end
-    end
-
     def collect_v7_plugins
       @v7_plugin_classes.each do |plugin_class|
         load_v7_plugin(plugin_class)
       end
     end
 
-    def load_v6_plugin_class(contents, plugin_path, plugin_dir_path)
-      plugin_class = Class.new(Ohai::DSL::Plugin::VersionVI) { collect_contents(contents) }
-      @v6_plugin_classes << V6PluginClass.new(plugin_class, plugin_path, plugin_dir_path)
-      plugin_class
-    end
-
-    def load_v6_plugin(plugin_class, plugin_path, plugin_dir_path)
-      plugin_class.new(@controller, plugin_path, plugin_dir_path)
-    end
-
-    # Capture the plugin in @v6_dependency_solver if it is a V6 plugin
-    # to be able to resolve V6 dependencies later on.
-    # We are using the partial path in the dep solver as a key.
-    def loaded_v6_plugin(plugin, plugin_file_path, plugin_dir_path)
-      partial_path = Pathname.new(plugin_file_path).relative_path_from(Pathname.new(plugin_dir_path)).to_s
-
-      unless v6_dependency_solver.has_key?(partial_path)
-        v6_dependency_solver[partial_path] = plugin
-      else
-        Ohai::Log.debug("Plugin '#{plugin_file_path}' is already loaded.")
-      end
-    end
-
     def load_v7_plugin_class(contents, plugin_path)
+      Ohai::Log.debug("Loading Ohai plugin class from #{plugin_path}")
       plugin_class = eval(contents, TOPLEVEL_BINDING, plugin_path)
       unless plugin_class.kind_of?(Class) && plugin_class < Ohai::DSL::Plugin
         raise Ohai::Exceptions::IllegalPluginDefinition, "Plugin file cannot contain any statements after the plugin definition"

@@ -41,8 +41,6 @@ module Ohai
         case plugin.version
         when :version7
           run_v7_plugin(plugin)
-        when :version6
-          run_v6_plugin(plugin)
         else
           raise Ohai::Exceptions::InvalidPlugin, "Invalid plugin version #{plugin.version} for plugin #{plugin}"
         end
@@ -53,12 +51,6 @@ module Ohai
       rescue Exception, Errno::ENOENT => e
         Ohai::Log.debug("Plugin #{plugin.name} threw exception #{e.inspect} #{e.backtrace.join("\n")}")
       end
-    end
-
-    def run_v6_plugin(plugin)
-      return true if plugin.has_run?
-
-      @safe_run ? plugin.safe_run : plugin.run
     end
 
     def run_v7_plugin(plugin)

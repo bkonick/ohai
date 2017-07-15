@@ -37,7 +37,6 @@ module Ohai
     attr_accessor :data
     attr_reader :config
     attr_reader :provides_map
-    attr_reader :v6_dependency_solver
 
     # the cli flag is used to determine if we're being constructed by
     # something like chef-client (which doesn't not set this flag) and
@@ -53,7 +52,6 @@ module Ohai
     def reset_system
       @data = Mash.new
       @provides_map = ProvidesMap.new
-      @v6_dependency_solver = Hash.new
 
       configure_ohai
       configure_logging if @cli
@@ -61,7 +59,7 @@ module Ohai
       @loader = Ohai::Loader.new(self)
       @runner = Ohai::Runner.new(self, true)
 
-      Ohai::Hints.refresh_hints()
+      Ohai::Hints.refresh_hints
 
       # Remove the previously defined plugins
       recursive_remove_constants(Ohai::NamedPlugin)
@@ -86,19 +84,6 @@ module Ohai
     end
 
     def run_plugins(safe = false, attribute_filter = nil)
-      # First run all the version 6 plugins
-      @v6_dependency_solver.values.each do |v6plugin|
-        @runner.run_plugin(v6plugin)
-      end
-
-      # Users who are migrating from ohai 6 may give one or more Ohai 6 plugin
-      # names as the +attribute_filter+. In this case we return early because
-      # the v7 plugin provides map will not have an entry for this plugin.
-      if attribute_filter && Array(attribute_filter).all? { |filter_item| have_v6_plugin?(filter_item) }
-        return true
-      end
-
-      # Then run all the version 7 plugins
       begin
         @provides_map.all_plugins(attribute_filter).each do |plugin|
           @runner.run_plugin(plugin)
@@ -121,15 +106,6 @@ module Ohai
       freeze_strings!
     end
 
-    def have_v6_plugin?(name)
-      @v6_dependency_solver.values.any? { |v6plugin| v6plugin.name == name }
-    end
-
-    def pathify_v6_plugin(plugin_name)
-      path_components = plugin_name.split("::")
-      File.join(path_components) + ".rb"
-    end
-
     #
     # Below APIs are from V6.
     # Make sure that you are not breaking backwards compatibility
@@ -137,22 +113,14 @@ module Ohai
     #
     def require_plugin(plugin_ref, force = false)
       plugins = [ ]
-      # This method is only callable by version 6 plugins.
-      # First we check if there exists a v6 plugin that fulfills the dependency.
-      if @v6_dependency_solver.has_key? pathify_v6_plugin(plugin_ref)
-        # Note that: partial_path looks like Plugin::Name
-        # keys for @v6_dependency_solver are in form 'plugin/name.rb'
-        plugins << @v6_dependency_solver[pathify_v6_plugin(plugin_ref)]
-      else
         # While looking up V7 plugins we need to convert the plugin_ref to an attribute.
-        attribute = plugin_ref.gsub("::", "/")
-        begin
-          plugins = @provides_map.find_providers_for([attribute])
-        rescue Ohai::Exceptions::AttributeNotFound
-          Ohai::Log.debug("Can not find any v7 plugin that provides #{attribute}")
-          plugins = [ ]
-        end
-      end
+      attribute = plugin_ref.gsub("::", "/")
+      begin
+      plugins = @provides_map.find_providers_for([attribute])
+    rescue Ohai::Exceptions::AttributeNotFound
+      Ohai::Log.debug("Cannot find any v7 plugin that provides #{attribute}")
+      plugins = [ ]
+    end
 
       if plugins.empty?
         raise Ohai::Exceptions::DependencyNotFound, "Can not find a plugin for dependency #{plugin_ref}"

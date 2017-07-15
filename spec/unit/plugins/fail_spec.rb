@@ -161,51 +161,6 @@ shared_examples "a v7 run failure" do
   end
 end
 
-=begin
-shared_examples "a v6 run failure" do
-  before(:all) do
-    begin
-      Dir.mkdir("#{tmp}/plugins")
-    rescue Errno::EEXIST
-      # ignore
-    end
-  end
-
-  before(:each) do
-    fail_file = File.open("#{tmp}/plugins/fail.rb", "w+")
-    fail_file.write(failstr)
-    fail_file.close
-  end
-
-  after(:each) do
-    File.delete("#{tmp}/plugins/fail.rb")
-  end
-
-  after(:all) do
-    begin
-      Dir.delete("#{tmp}/plugins")
-    rescue
-      # ignore
-    end
-  end
-
-  before(:each) do
-    @ohai = Ohai::System.new
-    @loader = Ohai::Loader.new(@ohai)
-  end
-
-  it "should not add data keys" do
-    @loader.load_plugin("#{tmp}/plugins/fail.rb")
-    @ohai.data.should_not have_key("fail")
-  end
-
-  it "should write to Ohai::Log" do
-    Ohai::Log.should_receive(:warn).once
-    @loader.load_plugin("#{tmp}/plugins/fail.rb").new(@ohai).run
-  end
-end
-=end
-
 describe "when using DSL commands outside Ohai.plugin block" do
   failstr1 = <<EOF
 provides "fail"
@@ -298,17 +253,6 @@ EOF
   end
 
   it_behaves_like "a v7 run failure" do
-    let(:failstr) { failstr }
-  end
-end
-
-describe "when setting undeclared attribute" do
-  failstr = <<EOF
-provides "fail"
-other "attribute"
-EOF
-
-  it_behaves_like "a v6 run failure" do
     let(:failstr) { failstr }
   end
 end
